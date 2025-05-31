@@ -1,7 +1,13 @@
 import { GlobalConfig } from '@n8n/config';
+import {
+	CredentialsRepository,
+	ProjectRelationRepository,
+	SharedWorkflowRepository,
+	WorkflowRepository,
+} from '@n8n/db';
 import { Service } from '@n8n/di';
 import { snakeCase } from 'change-case';
-import { InstanceSettings } from 'n8n-core';
+import { BinaryDataConfig, InstanceSettings } from 'n8n-core';
 import type { ExecutionStatus, INodesGraphResult, ITelemetryTrackProperties } from 'n8n-workflow';
 import { TelemetryHelpers } from 'n8n-workflow';
 import os from 'node:os';
@@ -9,10 +15,6 @@ import { get as pslGet } from 'psl';
 
 import config from '@/config';
 import { N8N_VERSION } from '@/constants';
-import { CredentialsRepository } from '@/databases/repositories/credentials.repository';
-import { ProjectRelationRepository } from '@/databases/repositories/project-relation.repository';
-import { SharedWorkflowRepository } from '@/databases/repositories/shared-workflow.repository';
-import { WorkflowRepository } from '@/databases/repositories/workflow.repository';
 import { EventService } from '@/events/event.service';
 import type { RelayEventMap } from '@/events/maps/relay.event-map';
 import { determineFinalExecutionStatus } from '@/execution-lifecycle/shared/shared-hook-functions';
@@ -31,6 +33,7 @@ export class TelemetryEventRelay extends EventRelay {
 		private readonly license: License,
 		private readonly globalConfig: GlobalConfig,
 		private readonly instanceSettings: InstanceSettings,
+		private readonly binaryDataConfig: BinaryDataConfig,
 		private readonly workflowRepository: WorkflowRepository,
 		private readonly nodeTypes: NodeTypes,
 		private readonly sharedWorkflowRepository: SharedWorkflowRepository,
@@ -77,6 +80,8 @@ export class TelemetryEventRelay extends EventRelay {
 			'ldap-login-sync-failed': (event) => this.ldapLoginSyncFailed(event),
 			'login-failed-due-to-ldap-disabled': (event) => this.loginFailedDueToLdapDisabled(event),
 			'workflow-created': (event) => this.workflowCreated(event),
+			'workflow-archived': (event) => this.workflowArchived(event),
+			'workflow-unarchived': (event) => this.workflowUnarchived(event),
 			'workflow-deleted': (event) => this.workflowDeleted(event),
 			'workflow-sharing-updated': (event) => this.workflowSharingUpdated(event),
 			'workflow-saved': async (event) => await this.workflowSaved(event),
@@ -532,6 +537,26 @@ export class TelemetryEventRelay extends EventRelay {
 		});
 	}
 
+	private workflowArchived({ user, workflowId, publicApi }: RelayEventMap['workflow-archived']) {
+		this.telemetry.track('User archived workflow', {
+			user_id: user.id,
+			workflow_id: workflowId,
+			public_api: publicApi,
+		});
+	}
+
+	private workflowUnarchived({
+		user,
+		workflowId,
+		publicApi,
+	}: RelayEventMap['workflow-unarchived']) {
+		this.telemetry.track('User unarchived workflow', {
+			user_id: user.id,
+			workflow_id: workflowId,
+			public_api: publicApi,
+		});
+	}
+
 	private workflowDeleted({ user, workflowId, publicApi }: RelayEventMap['workflow-deleted']) {
 		this.telemetry.track('User deleted workflow', {
 			user_id: user.id,
@@ -704,6 +729,7 @@ export class TelemetryEventRelay extends EventRelay {
 					sharing_role: userRole,
 					credential_type: null,
 					is_managed: false,
+					eval_rows_left: null,
 					...TelemetryHelpers.resolveAIMetrics(workflow.nodes, this.nodeTypes),
 				};
 
@@ -713,6 +739,15 @@ export class TelemetryEventRelay extends EventRelay {
 					});
 					manualExecEventProperties.node_graph_string = JSON.stringify(nodeGraphResult.nodeGraph);
 				}
+
+				nodeGraphResult?.evaluationTriggerNodeNames?.forEach((name: string) => {
+					const rowsLeft =
+						runData.data.resultData.runData[name]?.[0]?.data?.main?.[0]?.[0]?.json?._rowsLeft;
+
+					if (typeof rowsLeft === 'number') {
+						manualExecEventProperties.eval_rows_left = rowsLeft;
+					}
+				});
 
 				if (runData.data.startData?.destinationNode) {
 					const credentialsData = TelemetryHelpers.extractLastExecutedNodeCredentialData(runData);
@@ -761,10 +796,9 @@ export class TelemetryEventRelay extends EventRelay {
 
 	private async serverStarted() {
 		const cpus = os.cpus();
-		const binaryDataConfig = config.getEnv('binaryDataManager');
 
-		const isS3Selected = config.getEnv('binaryDataManager.mode') === 's3';
-		const isS3Available = config.getEnv('binaryDataManager.availableModes').includes('s3');
+		const isS3Selected = this.binaryDataConfig.mode === 's3';
+		const isS3Available = this.binaryDataConfig.availableModes.includes('s3');
 		const isS3Licensed = this.license.isBinaryDataS3Licensed();
 		const authenticationMethod = config.getEnv('userManagement.authenticationMethod');
 
@@ -801,7 +835,7 @@ export class TelemetryEventRelay extends EventRelay {
 				executions_data_max_age: this.globalConfig.executions.pruneDataMaxAge,
 			},
 			n8n_deployment_type: config.getEnv('deployment.type'),
-			n8n_binary_data_mode: binaryDataConfig.mode,
+			n8n_binary_data_mode: this.binaryDataConfig.mode,
 			smtp_set_up: this.globalConfig.userManagement.emails.mode === 'smtp',
 			ldap_allowed: authenticationMethod === 'ldap',
 			saml_enabled: authenticationMethod === 'saml',

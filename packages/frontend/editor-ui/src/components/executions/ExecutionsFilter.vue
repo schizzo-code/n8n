@@ -10,7 +10,7 @@ import type {
 	IWorkflowDb,
 	IWorkflowShortResponse,
 } from '@/Interface';
-import { i18n as locale } from '@/plugins/i18n';
+import { i18n as locale } from '@n8n/i18n';
 import { useSettingsStore } from '@/stores/settings.store';
 import { getObjectKeys, isEmpty } from '@/utils/typesUtils';
 import type { Placement } from '@floating-ui/core';
@@ -166,11 +166,17 @@ onBeforeMount(() => {
 				square
 				:active="!!countSelectedFilterProps"
 				data-test-id="executions-filter-button"
+				:class="$style.filterButton"
 			>
 				<template v-if="!!countSelectedFilterProps" #default>
-					<n8n-badge theme="primary" class="mr-4xs" data-test-id="execution-filter-badge">{{
-						countSelectedFilterProps
-					}}</n8n-badge>
+					<n8n-badge
+						theme="primary"
+						class="mr-4xs"
+						data-test-id="execution-filter-badge"
+						:class="$style.filterBadge"
+					>
+						{{ countSelectedFilterProps }}
+					</n8n-badge>
 				</template>
 			</n8n-button>
 		</template>
@@ -400,6 +406,17 @@ onBeforeMount(() => {
 
 .tooltipIcon {
 	color: var(--color-text-light);
+}
+
+.filterButton {
+	position: relative;
+
+	.filterBadge {
+		position: absolute;
+		top: 0;
+		right: -4px;
+		transform: translate(50%, -50%);
+	}
 }
 </style>
 
